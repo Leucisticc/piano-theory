@@ -1284,12 +1284,21 @@ function viewProgress(){
 /* ---------- MIDI input ---------- */
 const MIDI={access:null,status:'off',names:[]};
 const disp=m=>m>=KB_LO&&m<=KB_HI?m:KB_LO+(((m-KB_LO)%24)+24)%24;
-async function initMidi(){
-  if(MIDI.access)return true;
+function bindMidi(){
+  if(!MIDI.access)return;
+  MIDI.names=[];MIDI.nOut=0;
+  for(const inp of MIDI.access.inputs.values()){inp.onmidimessage=onMidi;try{inp.open&&inp.open()}catch(e){}MIDI.names.push(inp.name||'MIDI input')}
+  for(const o of MIDI.access.outputs.values())MIDI.nOut++;
+  MIDI.status=MIDI.names.length?'ready':'none';updMidiUI();
+  clearTimeout(MIDI.poll);if(MIDI.status==='none'&&state.settings.input==='midi')MIDI.poll=setTimeout(bindMidi,2000);
+}
+async function initMidi(force){
+  if(MIDI.access&&!force){bindMidi();return true}
   if(!navigator.requestMIDIAccess){MIDI.status='unsupported';updMidiUI();return false}
-  try{MIDI.access=await navigator.requestMIDIAccess()}catch(e){MIDI.status='denied';MIDI.err=(e&&(e.name||e.message))||'unknown';updMidiUI();return false}
-  const bind=()=>{MIDI.names=[];MIDI.access.inputs.forEach(inp=>{inp.onmidimessage=onMidi;MIDI.names.push(inp.name)});MIDI.status=MIDI.names.length?'ready':'none';updMidiUI()};
-  MIDI.access.onstatechange=bind;bind();return true;
+  MIDI.status='off';updMidiUI();
+  try{MIDI.access=await navigator.requestMIDIAccess({sysex:false})}catch(e){MIDI.status='denied';MIDI.err=(e&&(e.name||e.message))||'unknown';updMidiUI();return false}
+  MIDI.access.onstatechange=()=>bindMidi();
+  bindMidi();setTimeout(bindMidi,600);return true;
 }
 function onMidi(e){
   const d=e.data;if(!d||d.length<3||(d[0]&0xf0)!==0x90||!d[2])return;
@@ -1300,7 +1309,7 @@ function onMidi(e){
 }
 function midiText(){
   if(state.settings.input!=='midi')return'';
-  return{off:'Connecting to your MIDI keyboard…',unsupported:'This browser can’t read MIDI. Use Chrome or Edge on a computer or Android.',denied:`MIDI access was blocked (${MIDI.err}). If you’re viewing this inside Claude, open the downloaded file in Chrome instead.`,none:'No MIDI keyboard found. Plug your piano in by USB.',ready:`Connected: ${MIDI.names.join(', ')}`}[MIDI.status];
+  return{off:'Connecting to your MIDI keyboard…',unsupported:'This browser can’t read MIDI. Use Chrome or Edge on a computer or Android.',denied:`MIDI access was blocked (${MIDI.err}). If you’re viewing this inside Claude, open the downloaded file in Chrome instead.`,none:`No MIDI keyboard found yet (Chrome sees ${MIDI.names.length} inputs, ${MIDI.nOut||0} outputs). Close other tabs or apps using the piano, unplug and replug it, then press Scan again. Still checking…`,ready:`Connected: ${MIDI.names.join(', ')}`}[MIDI.status];
 }
 function updMidiUI(){document.querySelectorAll('.midistat').forEach(el=>el.textContent=midiText())}
 function applyInputMode(){
@@ -1320,10 +1329,12 @@ function viewSettings(){
       <button class="segb ${midi?'on':''}" data-in="midi" role="radio" aria-checked="${midi}">MIDI keyboard</button>
     </div>
     <p class="midistat"></p>
+    ${midi?'<button class="btn ghost" id="rescan" style="margin-top:10px">Scan again</button>':''}
     <p class="note">With MIDI, answer on your real piano in any octave and tap rhythms on any key. The on-screen keyboard shrinks but still works. You can also switch from the button at the top of any practice round. MIDI works in Chrome and Edge on a computer or Android, not on iPhone or iPad.</p>
   </div>`;
   bindTop();
   app.querySelectorAll('[data-in]').forEach(b=>b.onclick=()=>{setInput(b.dataset.in);viewSettings()});
+  const rs=app.querySelector('#rescan');if(rs)rs.onclick=()=>initMidi(true);
   updMidiUI();
 }
 
